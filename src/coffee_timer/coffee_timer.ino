@@ -3,10 +3,12 @@
 // Purpose: Attach to office coffee pot to report on age of the coffee
 // Repository: https://github.com/rharder/coffee_timer
 
-// Configurable pins, etc for this physical implementation:
+// Configurable pins, etc for this implementation:
 #define PIEZZO_SPEAKER_PIN 8
 #define CURRENT_SENSOR_PIN A0
 #define LCD_I2C_ADDR 0x27
+#define SAMPLES_NUM 10
+#define MINUTES_AFTER_WHICH_DROP_SECONDS 5
 
 // Arduino Nano I2C pins are A4-SDA, A5-SCL
 
@@ -29,7 +31,9 @@ const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 
 
 // By experiment figure out what an appropriate threshold would be
-#define IRMS_THRESHOLD 1.5  // when plugged into usb, 0.2
+#define IRMS_THRESHOLD 1.4  // when plugged into usb, 0.2
+double samples_val[SAMPLES_NUM];
+unsigned int sample_pos = 0;
 
 // State machine
 unsigned char state = 0;
@@ -41,18 +45,36 @@ unsigned char state = 0;
 // Based on millis() once brewing ends
 unsigned long coffee_birth = 0;
 
+void sample_make_observation(){
+  samples_val[sample_pos] = emon1.calcIrms(1480);
+  sample_pos++;
+  sample_pos = sample_pos % SAMPLES_NUM;
+}
 
+double sample_get_average(){
+  double sum = 0;
+  for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
+    sum += samples_val[i];
+  }
+  return sum / SAMPLES_NUM;
+}
 
 void setup()
 {  
   Serial.begin(9600);
   lcd.init();
   lcd.backlight();
-  lcd.print("Startup...");
+  lcd_set_line(0, "Getting baseline");
+  lcd_set_line(1, "reading...");
   
   emon1.current(CURRENT_SENSOR_PIN, 111.1); // Current: input pin, calibration.
   for( int i = 0; i < 10; i++ ){
     emon1.calcIrms(1480); // Flush initial bad reads
+    delay(2);
+  }
+  for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
+    sample_make_observation();
+    delay(2);
   }
 
   //do_threshold_experiment();  // Find out what threshold should be
@@ -64,11 +86,11 @@ void setup()
 void loop()
 {
   unsigned long loop_start = millis();
-  //Serial.print("loop start state ");
-  //Serial.print(state);
-  
+
   // Read the current sensor
-  double Irms = emon1.calcIrms(1480);  // Calculate Irms only
+  sample_make_observation();
+  //double Irms = emon1.calcIrms(1480);  // Calculate Irms only
+  double Irms = sample_get_average();
 
   // Under threshold means coffee machine is off
   if( Irms < IRMS_THRESHOLD ){
@@ -117,9 +139,10 @@ void loop()
   update_display();  // Update visual display
 
   // Don't really need this loop spinning any faster than this
-  if( millis() - loop_start < 1000 ){
-    delay( 1000 - (millis() - loop_start) );
-  }
+  //if( millis() - loop_start < 1000 ){
+  //  delay( 1000 - (millis() - loop_start) );
+  //}
+  delay(2);
   
 } // end loop
 
@@ -156,7 +179,7 @@ void update_display(){
       String age;
       if( hours > 0 ){ // 3 hr 27 min
         age = String(hours) + String(" hr ") + String(minutes) + String(" min" );
-      } else if( minutes >= 10 ){ // 22 min
+      } else if( minutes >= MINUTES_AFTER_WHICH_DROP_SECONDS ){ // 22 min
         age = String(minutes) + String(" min ");
       } else if( minutes > 0 ){ // 2 min 45 sec
         age = String(minutes) + String(" min ") + String(seconds_only) + String(" sec" );
@@ -179,6 +202,7 @@ void lcd_set_line(unsigned int lineNum, String newLine){
   if( prev[lineNum] == NULL || !prev[lineNum].equals(newLine)){
     lcd.setCursor(0,lineNum);
     lcd.print(newLine);
+    lcd.print(BLANK_LINE); // Fill up the rest with spaces.
     prev[lineNum] = String(newLine);
   }
 }
@@ -208,9 +232,12 @@ void do_threshold_experiment(){
   Serial.begin(9600);
   Serial.println("Turn machine on and off to see what a reasonable threshold would be.");
   while(true){
-    Irms = emon1.calcIrms(1480);  // Calculate Irms only
+    sample_make_observation();
+    Irms = sample_get_average();
+//    Irms = emon1.calcIrms(1480);  // Calculate Irms only
     Serial.println(Irms);
     lcd_set_line(1, String(Irms));
+    delay(10);
   }
 }
 
