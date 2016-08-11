@@ -3,15 +3,19 @@
 // Purpose: Attach to office coffee pot to report on age of the coffee
 // Repository: https://github.com/rharder/coffee_timer
 
+// Pins for this physical implementation:
+#define PIEZZO_SPEAKER_PIN 8
+#define CURRENT_SENSOR_PIN A0
+
 // https://github.com/openenergymonitor/EmonLib
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
+
 
 // Play music when coffee is done
 #include "pitches.h"
 const int CHARGE_FANFARE[] = { NOTE_G4, NOTE_C4, NOTE_E5, NOTE_G5, NOTE_E5, NOTE_G5 };
 const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
-#define PIEZZO_SPEAKER_PIN 8
 
 
 // By experiment figure out what an appropriate threshold would be
@@ -23,8 +27,6 @@ unsigned char state = 0;
 #define STATE_BREWING 1
 #define STATE_BREWED 2
 
-// Where is the current sensor plugged in to Arduino
-#define CURRENT_SENSOR_PIN A0
 
 // Based on millis() once brewing ends
 unsigned long coffee_birth = 0;
@@ -38,12 +40,16 @@ void setup()
     emon1.calcIrms(1480); // Flush initial bad reads
   }
 
-  // do_threshold_experiment();
+  // do_threshold_experiment();  // Find out what threshold should be
 }
 
 
 void loop()
 {
+  unsigned long loop_start = millis();
+  //Serial.print("loop start state ");
+  //Serial.print(state);
+  
   // Read the current sensor
   double Irms = emon1.calcIrms(1480);  // Calculate Irms only
 
@@ -65,10 +71,14 @@ void loop()
       case STATE_BREWED: // No change
         break;
 
+      case STATE_UNKNOWN:
+        break;
+
       // Not sure - call it Unknown
       default:
         state = STATE_UNKNOWN;
         coffee_birth = 0;
+        //Serial.println("A. RESET COFFEE TO 0");
         break;
     } // end switch: state
     
@@ -78,6 +88,7 @@ void loop()
     if( state != STATE_BREWING ){
       state = STATE_BREWING;
       coffee_birth = 0;
+      //Serial.println("B. RESET COFFEE TO 0");
     }
   }
 
@@ -88,24 +99,33 @@ void loop()
 
   update_display();  // Update visual display
 
-  delay(1000);  // Don't really need this loop spinning any faster than this
+  // Don't really need this loop spinning any faster than this
+  if( millis() - loop_start < 1000 ){
+    delay( 1000 - (millis() - loop_start) );
+  }
+  
 } // end loop
 
 void update_display(){
   
   switch( state ){
+    
     case STATE_UNKNOWN:
       Serial.println("Coffee age: Unknown");
       break;
+      
     case STATE_BREWING:
       Serial.println("Coffee brewing...");
       break;
+      
     case STATE_BREWED:
       Serial.print("Coffee age: ");
       unsigned long seconds = coffee_age_seconds();
       unsigned long minutes = (seconds % 3600) / 60;
       unsigned long hours = seconds / 3600;
       unsigned long seconds_only = seconds % 60;
+
+      //Serial.print("(");Serial.print(seconds);Serial.print(") ");
 
       // Find largest non-zero measurement to make human readable time
       if( hours > 0 ){ // 3 hr 27 min
@@ -129,11 +149,12 @@ unsigned long coffee_age_seconds(){
 
   // Confirm magnitudes before doing unsigned integer math
   if( mill > coffee_birth ){
-    unsigned age_millis = millis() - coffee_birth;
+    unsigned long age_millis = mill - coffee_birth;
+    Serial.print("[");Serial.print(age_millis);Serial.print("]");
     return age_millis / 1000;
     
   } else { // Something wrong with overflow or something else
-    return 0;
+    return 999;
   }
   
 } // end coffee_age_seconds
