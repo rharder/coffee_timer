@@ -1,10 +1,18 @@
 // Title: Coffee Timer
 // Author: Robert Harder
 // Purpose: Attach to office coffee pot to report on age of the coffee
+// Repository: https://github.com/rharder/coffee_timer
 
 // https://github.com/openenergymonitor/EmonLib
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
+
+// Play music when coffee is done
+#include "pitches.h"
+const int CHARGE_FANFARE[] = { NOTE_G4, NOTE_C4, NOTE_E5, NOTE_G5, NOTE_E5, NOTE_G5 };
+const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
+#define PIEZZO_SPEAKER_PIN 8
+
 
 // By experiment figure out what an appropriate threshold would be
 #define IRMS_THRESHOLD 0.20
@@ -45,10 +53,12 @@ void loop()
     // It's off -- what was it's previous state?
     switch( state ){
 
+      // Coffee is ready!
       // Was brewing -- apparently just turned off.  Start clock.
       case STATE_BREWING:
         state = STATE_BREWED;
         coffee_birth = millis();
+        play_charge_fanfare(PIEZZO_SPEAKER_PIN);
         break;
 
       // Was alread in Brewed state -- no change
@@ -136,6 +146,26 @@ void do_threshold_experiment(){
   while(true){
     Irms = emon1.calcIrms(1480);  // Calculate Irms only
     Serial.println(Irms);
+  }
+}
+
+
+void play_charge_fanfare(int pin){
+    // iterate over the notes of the melody:
+  for (int thisNote = 0; thisNote < 6; thisNote++) {
+
+    // to calculate the note duration, take one second
+    // divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int noteDuration = 1000 / CHARGE_FANFARE_DURATIONS[thisNote];
+    tone(pin, CHARGE_FANFARE[thisNote], noteDuration);
+
+    // to distinguish the notes, set a minimum time between them.
+    // the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = noteDuration * 1.30;
+    delay(pauseBetweenNotes);
+    // stop the tone playing:
+    noTone(pin);
   }
 }
 
