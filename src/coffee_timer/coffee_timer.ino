@@ -3,13 +3,23 @@
 // Purpose: Attach to office coffee pot to report on age of the coffee
 // Repository: https://github.com/rharder/coffee_timer
 
-// Pins for this physical implementation:
+// Configurable pins, etc for this physical implementation:
 #define PIEZZO_SPEAKER_PIN 8
 #define CURRENT_SENSOR_PIN A0
+#define LCD_I2C_ADDR 0x27
+
+// Arduino Nano I2C pins are A4-SDA, A5-SCL
 
 // https://github.com/openenergymonitor/EmonLib
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
+
+
+// May switch first screen over at another time. Ought to.
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR,16,2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
+const String BLANK_LINE = String("                ");
 
 
 // Play music when coffee is done
@@ -19,7 +29,7 @@ const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 
 
 // By experiment figure out what an appropriate threshold would be
-#define IRMS_THRESHOLD 0.20
+#define IRMS_THRESHOLD 1.5  // when plugged into usb, 0.2
 
 // State machine
 unsigned char state = 0;
@@ -31,19 +41,26 @@ unsigned char state = 0;
 // Based on millis() once brewing ends
 unsigned long coffee_birth = 0;
 
+
+
 void setup()
 {  
   Serial.begin(9600);
+  lcd.init();
+  lcd.backlight();
+  lcd.print("Startup...");
   
   emon1.current(CURRENT_SENSOR_PIN, 111.1); // Current: input pin, calibration.
   for( int i = 0; i < 10; i++ ){
     emon1.calcIrms(1480); // Flush initial bad reads
   }
 
-  // do_threshold_experiment();  // Find out what threshold should be
+  //do_threshold_experiment();  // Find out what threshold should be
 }
 
-
+/**
+ * Main loop.
+ */
 void loop()
 {
   unsigned long loop_start = millis();
@@ -106,20 +123,28 @@ void loop()
   
 } // end loop
 
+
+/**
+ * Determine what the display should be saying.
+ */
 void update_display(){
   
   switch( state ){
     
     case STATE_UNKNOWN:
       Serial.println("Coffee age: Unknown");
+      lcd_set_line(0, "Age of coffee:");
+      lcd_set_line(1, "Unknown");
       break;
       
     case STATE_BREWING:
       Serial.println("Coffee brewing...");
+      lcd_set_line(0, "Brewing coffee...");
+      lcd_set_line(1, BLANK_LINE);
       break;
       
     case STATE_BREWED:
-      Serial.print("Coffee age: ");
+      Serial.print("Age of coffee: ");
       unsigned long seconds = coffee_age_seconds();
       unsigned long minutes = (seconds % 3600) / 60;
       unsigned long hours = seconds / 3600;
@@ -128,22 +153,40 @@ void update_display(){
       //Serial.print("(");Serial.print(seconds);Serial.print(") ");
 
       // Find largest non-zero measurement to make human readable time
+      String age;
       if( hours > 0 ){ // 3 hr 27 min
-        Serial.print(hours); Serial.print(" hr ");
-        Serial.print(minutes); Serial.print(" min");
+        age = String(hours) + String(" hr ") + String(minutes) + String(" min" );
+      } else if( minutes >= 10 ){ // 22 min
+        age = String(minutes) + String(" min ");
       } else if( minutes > 0 ){ // 2 min 45 sec
-        Serial.print(minutes); Serial.print(" min ");
-        Serial.print(seconds_only); Serial.print(" sec");
+        age = String(minutes) + String(" min ") + String(seconds_only) + String(" sec" );
       } else { // 12 sec
-        Serial.print(seconds_only); Serial.print(" sec");
+        age = String(seconds_only) + String(" sec" );
       }
-      Serial.println();
+      lcd_set_line(0, "Age of coffee:");
+      lcd_set_line(1, age);
+      Serial.println(age);
       break;
   } // end switch: state
 } // end update_display
 
 
-// Return the number of seconds since coffee was created
+/**
+ * Sets a line of text on the LCD.
+ */
+void lcd_set_line(unsigned int lineNum, String newLine){
+  static String prev[2];
+  if( prev[lineNum] == NULL || !prev[lineNum].equals(newLine)){
+    lcd.setCursor(0,lineNum);
+    lcd.print(newLine);
+    prev[lineNum] = String(newLine);
+  }
+}
+
+
+/**
+ * Return the number of seconds since coffee was created.
+ */
 unsigned long coffee_age_seconds(){
   unsigned long mill = millis();
 
@@ -167,10 +210,15 @@ void do_threshold_experiment(){
   while(true){
     Irms = emon1.calcIrms(1480);  // Calculate Irms only
     Serial.println(Irms);
+    lcd_set_line(1, String(Irms));
   }
 }
 
-
+/**
+ * Musical announcement when coffee is done brewing.
+ * 
+ * @param pin The Arduino output pin on which to play the tone.
+ */
 void play_charge_fanfare(int pin){
     // iterate over the notes of the melody:
   for (int thisNote = 0; thisNote < 6; thisNote++) {
@@ -189,4 +237,6 @@ void play_charge_fanfare(int pin){
     noTone(pin);
   }
 }
+
+
 
