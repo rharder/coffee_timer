@@ -148,6 +148,26 @@ void loop()
 
 
 /**
+ * Return the number of seconds since coffee was created.
+ */
+unsigned long coffee_age_seconds(){
+  unsigned long mill = millis();
+
+  // Confirm magnitudes before doing unsigned integer math
+  if( mill > coffee_birth ){
+    unsigned long age_millis = mill - coffee_birth;
+    Serial.print("[");Serial.print(age_millis);Serial.print("]");
+    return age_millis / 1000;
+    
+  } else { // Something wrong with overflow or something else
+    return 999;
+  }
+  
+} // end coffee_age_seconds
+
+
+
+/**
  * Determine what the display should be saying.
  */
 void update_display(){
@@ -169,15 +189,18 @@ void update_display(){
     case STATE_BREWED:
       Serial.print("Age of coffee: ");
       unsigned long seconds = coffee_age_seconds();
-      unsigned long minutes = (seconds % 3600) / 60;
+      unsigned long minutes = (seconds / 60) % 60;
       unsigned long hours = seconds / 3600;
       unsigned long seconds_only = seconds % 60;
+      unsigned long days = seconds / (3600*24);
 
       //Serial.print("(");Serial.print(seconds);Serial.print(") ");
 
       // Find largest non-zero measurement to make human readable time
       String age;
-      if( hours > 0 ){ // 3 hr 27 min
+      /*if( days > 0 ){
+        age = String(days) + String(" days");
+      } else */if( hours > 0 ){ // 3 hr 27 min
         age = String(hours) + String(" hr ") + String(minutes) + String(" min" );
       } else if( minutes >= MINUTES_AFTER_WHICH_DROP_SECONDS ){ // 22 min
         age = String(minutes) + String(" min ");
@@ -208,23 +231,6 @@ void lcd_set_line(unsigned int lineNum, String newLine){
 }
 
 
-/**
- * Return the number of seconds since coffee was created.
- */
-unsigned long coffee_age_seconds(){
-  unsigned long mill = millis();
-
-  // Confirm magnitudes before doing unsigned integer math
-  if( mill > coffee_birth ){
-    unsigned long age_millis = mill - coffee_birth;
-    Serial.print("[");Serial.print(age_millis);Serial.print("]");
-    return age_millis / 1000;
-    
-  } else { // Something wrong with overflow or something else
-    return 999;
-  }
-  
-} // end coffee_age_seconds
 
 // Only meant to be run during setup.
 void do_threshold_experiment(){
