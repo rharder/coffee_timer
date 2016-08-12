@@ -4,79 +4,105 @@
 // Repository: https://github.com/rharder/coffee_timer
 
 // Configurable pins, etc for this implementation:
+/**
+ * Configurable pins, values, etc for your implementation.
+ * 
+ * Note: Arduino Nano I2C pins are A4-SDA, A5-SCL
+ */
 #define PIEZZO_SPEAKER_PIN 8
 #define CURRENT_SENSOR_PIN A0
 #define LCD_I2C_ADDR 0x27
-#define SAMPLES_NUM 10
 #define MINUTES_AFTER_WHICH_DROP_SECONDS 5
+#define DAYS_AFTER_WHICH_DROP_HOURS 2
+#define SAMPLES_NUM 10
+#define IRMS_THRESHOLD 1.4  
 
-// Arduino Nano I2C pins are A4-SDA, A5-SCL
+// 
+/**
+ * By experiment figure out what an appropriate threshold would be,
+ * and update the IRMS_THRESHOLD for whatever works for you.
+ * 
+ * Nice todo item:  Have a reactive system that detects radical
+ * changes in sensor values.  Pull out my statistics book.
+ */
+double samples_val[SAMPLES_NUM];
+unsigned int sample_pos = 0;
 
-// https://github.com/openenergymonitor/EmonLib
+
+/**
+ * Use the Energy Monitor library to read the analog sensor.
+ * https://github.com/openenergymonitor/EmonLib
+ */
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
 
 
-// May switch first screen over at another time. Ought to.
+/**
+ * Using 16x2 LCD screen to display data.
+ */
 #include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR,16,2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 const String BLANK_LINE = String("                ");
 
 
-// Play music when coffee is done
+/**
+ * Play music when coffee is done.
+ */
 #include "pitches.h"
 const int CHARGE_FANFARE[] = { NOTE_G4, NOTE_C4, NOTE_E5, NOTE_G5, NOTE_E5, NOTE_G5 };
 const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 
 
-// By experiment figure out what an appropriate threshold would be
-#define IRMS_THRESHOLD 1.4  // when plugged into usb, 0.2
-double samples_val[SAMPLES_NUM];
-unsigned int sample_pos = 0;
-
-// State machine
-unsigned char state = 0;
+/**
+ * States for our program, only three.
+ */
 #define STATE_UNKNOWN 0
 #define STATE_BREWING 1
 #define STATE_BREWED 2
+unsigned char state = STATE_UNKNOWN;
 
 
-// Based on millis() once brewing ends
-unsigned long coffee_birth = 0;
 
-void sample_make_observation(){
-  samples_val[sample_pos] = emon1.calcIrms(1480);
-  sample_pos++;
-  sample_pos = sample_pos % SAMPLES_NUM;
-}
+/**
+ * Keep track of when the coffee was finished
+ * being brewed (born), and account for rollovers
+ * of the millis() timer.
+ */
+unsigned long coffee_birth_rollovers = 0;
+unsigned long coffee_birth_millis = 0;
+unsigned long rollover_count = 0;
+unsigned long prev_millis = 0;
 
-double sample_get_average(){
-  double sum = 0;
-  for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
-    sum += samples_val[i];
-  }
-  return sum / SAMPLES_NUM;
-}
 
+/**
+ * Initial setup.
+ */
 void setup()
 {  
-  Serial.begin(9600);
+  //Serial.begin(9600);
   lcd.init();
   lcd.backlight();
   lcd_set_line(0, "Getting baseline");
   lcd_set_line(1, "reading...");
+
   
   emon1.current(CURRENT_SENSOR_PIN, 111.1); // Current: input pin, calibration.
-  for( int i = 0; i < 10; i++ ){
-    emon1.calcIrms(1480); // Flush initial bad reads
+  for( int i = 0; i < 5; i++ ){
+    emon1.calcIrms(1480); // Flush a few initial bad reads
     delay(2);
   }
+  // Fill our running average sample list with real values
   for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
     sample_make_observation();
     delay(2);
   }
 
+  // If you want to see what values you're getting when your coffee
+  // pot is on or off, uncomment this line, and the program will display
+  // the running average of the raw readings.  Turn your pot on and off,
+  // and see what looks like a good threshold to use.
+  // When done, re-comment the line below.
   //do_threshold_experiment();  // Find out what threshold should be
 }
 
@@ -87,9 +113,14 @@ void loop()
 {
   unsigned long loop_start = millis();
 
+  // Has there been a rollover?
+  if( loop_start < prev_millis ){
+    rollover_count++;
+  }
+  prev_millis = loop_start;
+
   // Read the current sensor
   sample_make_observation();
-  //double Irms = emon1.calcIrms(1480);  // Calculate Irms only
   double Irms = sample_get_average();
 
   // Under threshold means coffee machine is off
@@ -98,26 +129,34 @@ void loop()
     // It's off -- what was it's previous state?
     switch( state ){
 
-      // Coffee is ready!
-      // Was brewing -- apparently just turned off.  Start clock.
-      case STATE_BREWING:
+      case STATE_BREWING: // Was "brewing"...
+        // Coffee is ready!
+        // 
+        //    ( (
+        //     ) )
+        //   ........
+        //   |      |]
+        //   \      /    Jen Carlson
+        //    `----'
+        // http://www.ascii-art.de/ascii/c/coffee.txt
+        //
+        // Was brewing -- apparently just turned off.  Start clock.
         state = STATE_BREWED;
-        coffee_birth = millis();
+        coffee_birth_millis = millis();
+        coffee_birth_rollovers = rollover_count;
         play_charge_fanfare(PIEZZO_SPEAKER_PIN);
         break;
 
-      // Was alread in Brewed state -- no change
-      case STATE_BREWED: // No change
+      
+      case STATE_BREWED: // Was "brewed"...
+        // Was alread in Brewed state -- no change
         break;
 
-      case STATE_UNKNOWN:
+      case STATE_UNKNOWN: // Was "unknown"
         break;
 
-      // Not sure - call it Unknown
       default:
         state = STATE_UNKNOWN;
-        coffee_birth = 0;
-        //Serial.println("A. RESET COFFEE TO 0");
         break;
     } // end switch: state
     
@@ -126,43 +165,78 @@ void loop()
     // If we were in a state other than brewing, then this is new
     if( state != STATE_BREWING ){
       state = STATE_BREWING;
-      coffee_birth = 0;
-      //Serial.println("B. RESET COFFEE TO 0");
     }
   }
 
-  // If there has been a rollover in millis() just set state to Unknown
-  if( state != STATE_UNKNOWN && millis() < coffee_birth ){
-    state = STATE_UNKNOWN;
-  }
+  // Update visual display
+  update_display();  
 
-  update_display();  // Update visual display
-
-  // Don't really need this loop spinning any faster than this
-  //if( millis() - loop_start < 1000 ){
-  //  delay( 1000 - (millis() - loop_start) );
-  //}
+  // Minor delay on principle, but we do want to get
+  // back to reading the sensor quickly.
   delay(2);
   
 } // end loop
 
 
+
+
+/**
+ * Make a single observation of the sensor and
+ * add it to the running list of observations.
+ */
+void sample_make_observation(){
+  samples_val[sample_pos] = emon1.calcIrms(1480);
+  sample_pos++;
+  sample_pos = sample_pos % SAMPLES_NUM;
+}
+
+/**
+ * Get the current running average of the sensor samples.
+ */
+double sample_get_average(){
+  double sum = 0;
+  for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
+    sum += samples_val[i];
+  }
+  return sum / SAMPLES_NUM;
+}
+
 /**
  * Return the number of seconds since coffee was created.
+ * Accounts for millis() rollovers.
  */
 unsigned long coffee_age_seconds(){
-  unsigned long mill = millis();
+  unsigned long mill = millis();  // Just read this once
 
-  // Confirm magnitudes before doing unsigned integer math
-  if( mill > coffee_birth ){
-    unsigned long age_millis = mill - coffee_birth;
-    Serial.print("[");Serial.print(age_millis);Serial.print("]");
-    return age_millis / 1000;
+  // Are we on the same rollover?
+  // [....B====M.....] millis - Birth
+  if( rollover_count == coffee_birth_rollovers ){
+    return (mill - coffee_birth_millis) / 1000;
     
-  } else { // Something wrong with overflow or something else
-    return 999;
+  } else { // Deal with rollovers
+    unsigned long seconds = 0;
+    unsigned long temp = 0;
+    
+    // Add seconds from initial coffee birth to its first rollover
+    // [....B=========R] Rollover - Birth
+    seconds += (0xFFFFFFFF - coffee_birth_millis) / 1000;
+    Serial.print(String(seconds) + String(" "));
+
+    // Add up any intervening rollovers in their entirety
+    // [==============R] Full span of 32-bit unsigned int
+    for( unsigned long i = 1; i < (rollover_count - coffee_birth_rollovers); i++ ){
+      seconds += 0xFFFFFFFF / 1000;
+    } // end for: in-between rollovers
+    Serial.print(String(seconds) + String(" "));
+
+    // Add up seconds from current rollover zero to millis()
+    // [====M..........] millis() - zero
+    seconds += mill / 1000;
+    Serial.println(String(seconds) + String(" "));
+
+    return seconds;
   }
-  
+
 } // end coffee_age_seconds
 
 
@@ -175,43 +249,46 @@ void update_display(){
   switch( state ){
     
     case STATE_UNKNOWN:
-      Serial.println("Coffee age: Unknown");
       lcd_set_line(0, "Age of coffee:");
       lcd_set_line(1, "Unknown");
       break;
       
     case STATE_BREWING:
-      Serial.println("Coffee brewing...");
       lcd_set_line(0, "Brewing coffee...");
       lcd_set_line(1, BLANK_LINE);
       break;
       
     case STATE_BREWED:
-      Serial.print("Age of coffee: ");
-      unsigned long seconds = coffee_age_seconds();
-      unsigned long minutes = (seconds / 60) % 60;
-      unsigned long hours = seconds / 3600;
-      unsigned long seconds_only = seconds % 60;
-      unsigned long days = seconds / (3600*24);
+      unsigned long seconds_total = coffee_age_seconds();
+      unsigned long seconds = seconds_total % 60;
+      unsigned long minutes = (seconds_total / 60) % 60;
+      unsigned long hours = (seconds_total / 3600) % 24;
+      unsigned long days = seconds_total / (3600*24);
 
-      //Serial.print("(");Serial.print(seconds);Serial.print(") ");
 
-      // Find largest non-zero measurement to make human readable time
+      // Make human readable time
       String age;
-      /*if( days > 0 ){
+      if( days >= DAYS_AFTER_WHICH_DROP_HOURS ){
         age = String(days) + String(" days");
-      } else */if( hours > 0 ){ // 3 hr 27 min
+        
+      } else if( days > 0 ){
+        age = String(days) + String(" days") + String(hours) + String(" hr");
+        
+      } else if( hours > 0 ){ // 3 hr 27 min
         age = String(hours) + String(" hr ") + String(minutes) + String(" min" );
+        
       } else if( minutes >= MINUTES_AFTER_WHICH_DROP_SECONDS ){ // 22 min
         age = String(minutes) + String(" min ");
+        
       } else if( minutes > 0 ){ // 2 min 45 sec
-        age = String(minutes) + String(" min ") + String(seconds_only) + String(" sec" );
+        age = String(minutes) + String(" min ") + String(seconds) + String(" sec" );
+        
       } else { // 12 sec
-        age = String(seconds_only) + String(" sec" );
+        age = String(seconds) + String(" sec" );
+        
       }
       lcd_set_line(0, "Age of coffee:");
       lcd_set_line(1, age);
-      Serial.println(age);
       break;
   } // end switch: state
 } // end update_display
@@ -219,6 +296,7 @@ void update_display(){
 
 /**
  * Sets a line of text on the LCD.
+ * Zero indexed.
  */
 void lcd_set_line(unsigned int lineNum, String newLine){
   static String prev[2];
@@ -231,8 +309,10 @@ void lcd_set_line(unsigned int lineNum, String newLine){
 }
 
 
-
-// Only meant to be run during setup.
+/**
+ * To use for finding threshold of coffee pot on/off.
+ * Instructions in setup() notes.
+ */
 void do_threshold_experiment(){
   double Irms = 0;
   Serial.begin(9600);
@@ -240,8 +320,8 @@ void do_threshold_experiment(){
   while(true){
     sample_make_observation();
     Irms = sample_get_average();
-//    Irms = emon1.calcIrms(1480);  // Calculate Irms only
     Serial.println(Irms);
+    lcd_set_line(0, String(Irms));
     lcd_set_line(1, String(Irms));
     delay(10);
   }
