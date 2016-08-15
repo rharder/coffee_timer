@@ -9,13 +9,35 @@
  * 
  * Note: Arduino Nano I2C pins are A4-SDA, A5-SCL
  */
-#define PIEZZO_SPEAKER_PIN 8
 #define CURRENT_SENSOR_PIN A0
-#define LCD_I2C_ADDR 0x27
+#define PIEZZO_SPEAKER_PIN 8
+#define SENSOR_TEST_PIN 7
+#define LCD_I2C_ADDR 0x26
 #define MINUTES_AFTER_WHICH_DROP_SECONDS 5
 #define DAYS_AFTER_WHICH_DROP_HOURS 2
-#define SAMPLES_NUM 10
+#define SAMPLES_NUM 20
 #define IRMS_THRESHOLD 1.4  
+
+/*
+
+ Arduino
++-------+
+|    A0 +-------+ Current sensor  +-------> 5V
+|       |
+|    D8 +-------+ Piezzo Electric +-------> GND
+|       |
+|    D7 +-------+ Sensor test button +----> 5V
+|       |       |   10k resistor
+|       |       +---/\/\/\---------> GND
+|       |
+|       |       +------------------+
+|    A4 +-------+ SDA   16x2    5V +------> 5V
+|    A5 +-------+ SCL   LCD    GND +------> GND
+|       |       +------------------+
+|       |
++-------+
+*/
+
 
 // 
 /**
@@ -62,7 +84,8 @@ const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 #define STATE_BREWED 2
 unsigned char state = STATE_UNKNOWN;
 
-
+unsigned long pots_brewed_count = 0;
+unsigned char brew_reset_buffer = 3;
 
 /**
  * Keep track of when the coffee was finished
@@ -74,13 +97,14 @@ unsigned long coffee_birth_millis = 0;
 unsigned long rollover_count = 0;
 unsigned long prev_millis = 0;
 
+String MSG;
 
 /**
  * Initial setup.
  */
 void setup()
 {  
-  //Serial.begin(9600);
+  Serial.begin(9600);
   lcd.init();
   lcd.backlight();
   lcd_set_line(0, "Getting baseline");
@@ -111,6 +135,9 @@ void setup()
  */
 void loop()
 {
+  static unsigned char irms_rising = 0;
+  static unsigned char irms_falling = 0;
+  
   unsigned long loop_start = millis();
 
   // Has there been a rollover?
@@ -121,56 +148,123 @@ void loop()
 
   // Read the current sensor
   sample_make_observation();
-  double Irms = sample_get_average();
+  //double Irms = sample_get_average();
 
-  // Under threshold means coffee machine is off
-  if( Irms < IRMS_THRESHOLD ){
-
-    // It's off -- what was it's previous state?
+  signed char movement = sensor_movement();
+  if( movement > 0 ){
     switch( state ){
+      case STATE_BREWING:
+        // We already knew that.  Do nothing.
+        break;
+      default:
+        // Brewing has begun.
+        state = STATE_BREWING;
+    } // end switch: state
+  } // end if: movement > 0
 
-      case STATE_BREWING: // Was "brewing"...
-        // Coffee is ready!
-        // 
-        //    ( (
-        //     ) )
-        //   ........
-        //   |      |]
-        //   \      /    Jen Carlson
-        //    `----'
-        // http://www.ascii-art.de/ascii/c/coffee.txt
-        //
-        // Was brewing -- apparently just turned off.  Start clock.
+  // Else the current is dropping -- done brewing?
+  else if( movement < 0 ){
+    switch( state ){
+      case STATE_BREWED:
+        // We already knew that.  Do nothing.
+        break;
+      case STATE_BREWING:  // Was brewing.  Now done!
         state = STATE_BREWED;
         coffee_birth_millis = millis();
+        pots_brewed_count++;
         coffee_birth_rollovers = rollover_count;
         play_charge_fanfare(PIEZZO_SPEAKER_PIN);
-        break;
-
-      
-      case STATE_BREWED: // Was "brewed"...
-        // Was alread in Brewed state -- no change
-        break;
-
-      case STATE_UNKNOWN: // Was "unknown"
-        break;
-
-      default:
-        state = STATE_UNKNOWN;
-        break;
     } // end switch: state
+  } // end if: movement < 0
+
+  update_display();
+  
+/*
+  // If button is pressed, user is asking for raw sensor reading
+  //if( digitalRead(SENSOR_TEST_PIN) == HIGH ){
+  //  lcd_set_line(0, "Average reading:");
+  //  lcd_set_line(1, String(Irms));
+  //  Serial.println(String(", res: ") + String(sensor_movement()));
+  //} // end if: show sensor
+
+  // Else run regular coffee program
+  //else 
+  {
+
+    //Serial.println(String("irms_falling = ") + String(irms_falling) + String("  |  irms_rising = ") + String(irms_rising));
+  
+    // Under threshold means coffee machine is off
+    //Serial.println(String("Irms: ") + String(Irms));
+    if( Irms < IRMS_THRESHOLD ){
+      irms_falling++;
+      if( irms_falling >= 3){  // Fell 3x cycles in a row
+        irms_rising = 0;
+        irms_falling = 99;
+  
+        // It's off -- what was it's previous state?
+        //Serial.println(String("  State: ") + String(state));
+        switch( state ){
     
-  } else {  // Coffee pot is turned on
-
-    // If we were in a state other than brewing, then this is new
-    if( state != STATE_BREWING ){
-      state = STATE_BREWING;
-    }
-  }
-
-  // Update visual display
-  update_display();  
-
+          case STATE_BREWING: // Was "brewing"...
+            brew_reset_buffer--; // Keeps "blips" from resetting counter
+            if( brew_reset_buffer == 0){
+              // Coffee is ready!
+              // 
+              //    ( (
+              //     ) )
+              //   ........
+              //   |      |]
+              //   \      /    Jen Carlson
+              //    `----'
+              // http://www.ascii-art.de/ascii/c/coffee.txt
+              //
+              // Was brewing -- apparently just turned off.  Start clock.
+              Serial.println("RESETTING BREW TIME");
+              state = STATE_BREWED;
+              coffee_birth_millis = millis();
+              pots_brewed_count++;
+              coffee_birth_rollovers = rollover_count;
+              play_charge_fanfare(PIEZZO_SPEAKER_PIN);
+            } // end if: down to threshold
+            
+            break;
+    
+          
+          case STATE_BREWED: // Was "brewed"...
+            // Was already in Brewed state -- no change
+            brew_reset_buffer = 3;
+            break;
+    
+          case STATE_UNKNOWN: // Was "unknown"
+            brew_reset_buffer = 3;
+            break;
+    
+          default:
+            state = STATE_UNKNOWN;
+            brew_reset_buffer = 3;
+            break;
+        } // end switch: state
+        
+      } // end if: irms_falling > 3
+      
+    } else {  // Irms > Threshold
+      irms_rising++;
+      if( irms_rising >= 3 ){
+        irms_falling = 0;
+        irms_rising = 99;
+  
+        // If we were in a state other than brewing, then this is new
+        if( state != STATE_BREWING ){
+          state = STATE_BREWING;
+        }
+      } // end if: irms_rising >= 3
+      
+    } // end else: irms > threshold
+  
+    // Update visual display
+    update_display();  
+  } // end else: regular coffee program
+*/
   // Minor delay on principle, but we do want to get
   // back to reading the sensor quickly.
   delay(2);
@@ -185,16 +279,54 @@ void loop()
  * add it to the running list of observations.
  */
 void sample_make_observation(){
-  samples_val[sample_pos] = emon1.calcIrms(1480);
   sample_pos++;
   sample_pos = sample_pos % SAMPLES_NUM;
+  samples_val[sample_pos] = emon1.calcIrms(1480);
 }
+
+
+/**
+ * Determines if the sensor has moved outside a noise range.
+ * When the sensor has 3x readings outside 20% the value of
+ * the moving average, then the function will return +/- 1.
+ * 
+ * Return values:
+ *   +1:  Sensor has gone high (current is running, pot is on)
+ *   -1:  Sensor has gone low (current is off, pot is off)
+ *    0:  No change detected
+ */
+signed char sensor_movement(){
+  static unsigned char rising = 0;
+  static unsigned char falling = 0;
+  
+  float avg = sample_get_average();
+  float perc = ((float)samples_val[sample_pos] - avg) / avg;
+  //Serial.print( String("avg: ") + String(avg) + String(", perc: ") + String(perc));
+
+  if( perc > 0.20 ){
+    rising++;
+    if( rising >= 3 ){
+      falling = 0;
+      rising = 99;
+      return +1;
+    } // end if: rising 3x in a row
+  } else if( perc < -0.20 ){
+    falling++;
+    if( falling >= 3 ){
+      rising = 0;
+      falling = 99;
+      return -1;
+    }
+  }
+  
+  return 0;
+} // end sensor_movement
 
 /**
  * Get the current running average of the sensor samples.
  */
-double sample_get_average(){
-  double sum = 0;
+float sample_get_average(){
+  float sum = 0;
   for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
     sum += samples_val[i];
   }
@@ -249,12 +381,12 @@ void update_display(){
   switch( state ){
     
     case STATE_UNKNOWN:
-      lcd_set_line(0, "Age of coffee:");
-      lcd_set_line(1, "Unknown");
+      lcd_set_line(0, "Ready to brew");
+      lcd_set_line(1, "Waiting...");
       break;
       
     case STATE_BREWING:
-      lcd_set_line(0, "Brewing coffee...");
+      lcd_set_line(0, "Brewing...");
       lcd_set_line(1, BLANK_LINE);
       break;
       
@@ -288,7 +420,7 @@ void update_display(){
         
       }
       lcd_set_line(0, "Age of coffee:");
-      lcd_set_line(1, age);
+      lcd_set_line(1, age);// + String(sample_get_average()));  // Just during testing.
       break;
   } // end switch: state
 } // end update_display
@@ -321,7 +453,7 @@ void do_threshold_experiment(){
     sample_make_observation();
     Irms = sample_get_average();
     Serial.println(Irms);
-    lcd_set_line(0, String(Irms));
+    lcd_set_line(0, "Sensor reading:");
     lcd_set_line(1, String(Irms));
     delay(10);
   }
