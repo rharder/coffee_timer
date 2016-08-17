@@ -147,7 +147,7 @@ void loop()
   prev_millis = loop_start;
 
   // Read the current sensor
-  sample_make_observation();
+  //sample_make_observation();
   //double Irms = sample_get_average();
 
   signed char movement = sensor_movement();
@@ -278,10 +278,12 @@ void loop()
  * Make a single observation of the sensor and
  * add it to the running list of observations.
  */
-void sample_make_observation(){
+float sample_make_observation(){
+  float obs = emon1.calcIrms(1480);
   sample_pos++;
   sample_pos = sample_pos % SAMPLES_NUM;
-  samples_val[sample_pos] = emon1.calcIrms(1480);
+  samples_val[sample_pos] = obs;
+  return obs;
 }
 
 
@@ -298,25 +300,29 @@ void sample_make_observation(){
 signed char sensor_movement(){
   static unsigned char rising = 0;
   static unsigned char falling = 0;
-  
+
+  float obs = sample_make_observation();
   float avg = sample_get_average();
-  float perc = ((float)samples_val[sample_pos] - avg) / avg;
+  float perc = (obs - avg) / avg;
   //Serial.print( String("avg: ") + String(avg) + String(", perc: ") + String(perc));
 
-  if( perc > 0.20 ){
+  if( perc > 0.30 ){
     rising++;
     if( rising >= 3 ){
       falling = 0;
       rising = 99;
       return +1;
     } // end if: rising 3x in a row
-  } else if( perc < -0.20 ){
+  } else if( perc < -0.30 ){
     falling++;
     if( falling >= 3 ){
       rising = 0;
       falling = 99;
       return -1;
     }
+  } else {
+    rising = 0;
+    falling = 0;
   }
   
   return 0;
