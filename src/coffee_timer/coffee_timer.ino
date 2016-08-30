@@ -9,13 +9,14 @@
  * 
  * Note: Arduino Nano I2C pins are A4-SDA, A5-SCL
  */
-#define CURRENT_SENSOR_PIN A0
-#define PIEZZO_SPEAKER_PIN 8
-#define SENSOR_TEST_PIN 7
-#define LCD_I2C_ADDR 0x26
+#define CURRENT_SENSOR_PIN A2
+#define PIEZZO_SPEAKER_PIN 2
+//#define SENSOR_TEST_PIN 0
+#define LCD_I2C_ADDR 0x3F
 #define MINUTES_AFTER_WHICH_DROP_SECONDS 5
 #define DAYS_AFTER_WHICH_DROP_HOURS 2
 #define SAMPLES_NUM 20
+//#define SAMPLES_RECENCY_TO_IGNORE 3
 #define IRMS_THRESHOLD 1.4  
 
 /*
@@ -57,7 +58,7 @@ unsigned int sample_pos = 0;
  */
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
-
+float sensor_threshold;
 
 /**
  * Using 16x2 LCD screen to display data.
@@ -74,6 +75,8 @@ const String BLANK_LINE = String("                ");
 #include "pitches.h"
 const int CHARGE_FANFARE[] = { NOTE_G4, NOTE_C4, NOTE_E5, NOTE_G5, NOTE_E5, NOTE_G5 };
 const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
+
+
 
 
 /**
@@ -121,6 +124,11 @@ void setup()
     sample_make_observation();
     delay(2);
   }
+
+  // Find a good threshold at 3 standard deviations above baseline
+  float avg = sample_get_average();
+  float stdev = sample_get_stdev();
+  sensor_threshold = avg + 6 * stdev;
 
   // If you want to see what values you're getting when your coffee
   // pot is on or off, uncomment this line, and the program will display
@@ -179,92 +187,6 @@ void loop()
 
   update_display();
   
-/*
-  // If button is pressed, user is asking for raw sensor reading
-  //if( digitalRead(SENSOR_TEST_PIN) == HIGH ){
-  //  lcd_set_line(0, "Average reading:");
-  //  lcd_set_line(1, String(Irms));
-  //  Serial.println(String(", res: ") + String(sensor_movement()));
-  //} // end if: show sensor
-
-  // Else run regular coffee program
-  //else 
-  {
-
-    //Serial.println(String("irms_falling = ") + String(irms_falling) + String("  |  irms_rising = ") + String(irms_rising));
-  
-    // Under threshold means coffee machine is off
-    //Serial.println(String("Irms: ") + String(Irms));
-    if( Irms < IRMS_THRESHOLD ){
-      irms_falling++;
-      if( irms_falling >= 3){  // Fell 3x cycles in a row
-        irms_rising = 0;
-        irms_falling = 99;
-  
-        // It's off -- what was it's previous state?
-        //Serial.println(String("  State: ") + String(state));
-        switch( state ){
-    
-          case STATE_BREWING: // Was "brewing"...
-            brew_reset_buffer--; // Keeps "blips" from resetting counter
-            if( brew_reset_buffer == 0){
-              // Coffee is ready!
-              // 
-              //    ( (
-              //     ) )
-              //   ........
-              //   |      |]
-              //   \      /    Jen Carlson
-              //    `----'
-              // http://www.ascii-art.de/ascii/c/coffee.txt
-              //
-              // Was brewing -- apparently just turned off.  Start clock.
-              Serial.println("RESETTING BREW TIME");
-              state = STATE_BREWED;
-              coffee_birth_millis = millis();
-              pots_brewed_count++;
-              coffee_birth_rollovers = rollover_count;
-              play_charge_fanfare(PIEZZO_SPEAKER_PIN);
-            } // end if: down to threshold
-            
-            break;
-    
-          
-          case STATE_BREWED: // Was "brewed"...
-            // Was already in Brewed state -- no change
-            brew_reset_buffer = 3;
-            break;
-    
-          case STATE_UNKNOWN: // Was "unknown"
-            brew_reset_buffer = 3;
-            break;
-    
-          default:
-            state = STATE_UNKNOWN;
-            brew_reset_buffer = 3;
-            break;
-        } // end switch: state
-        
-      } // end if: irms_falling > 3
-      
-    } else {  // Irms > Threshold
-      irms_rising++;
-      if( irms_rising >= 3 ){
-        irms_falling = 0;
-        irms_rising = 99;
-  
-        // If we were in a state other than brewing, then this is new
-        if( state != STATE_BREWING ){
-          state = STATE_BREWING;
-        }
-      } // end if: irms_rising >= 3
-      
-    } // end else: irms > threshold
-  
-    // Update visual display
-    update_display();  
-  } // end else: regular coffee program
-*/
   // Minor delay on principle, but we do want to get
   // back to reading the sensor quickly.
   delay(2);
@@ -301,42 +223,68 @@ signed char sensor_movement(){
   static unsigned char rising = 0;
   static unsigned char falling = 0;
 
-  float obs = sample_make_observation();
-  float avg = sample_get_average();
-  float perc = (obs - avg) / avg;
-  //Serial.print( String("avg: ") + String(avg) + String(", perc: ") + String(perc));
+  int return_val = 0;
 
-  if( perc > 0.30 ){
+  float obs = sample_make_observation();
+  //double avg = sample_get_average();
+  //double stdev = sample_get_stdev();
+  //double perc = (obs - avg) / avg;
+  //double dist = (obs - avg) / stdev;  // Distance from mean, in # of standard deviations
+  //Serial.println( String("avg: ") + String(avg) + String(", Stdev: ") + String(stdev) + String(", obs: ") + String(obs) + String(", dist: ") + String(dist));
+
+  if( obs > sensor_threshold ){
     rising++;
-    if( rising >= 3 ){
-      falling = 0;
-      rising = 99;
-      return +1;
+    falling = 0;
+    Serial.print('+');
+    if( rising > 3 ){
+      rising = 99;  // Crude way to handle rollovers
+      return_val = +1;
     } // end if: rising 3x in a row
-  } else if( perc < -0.30 ){
+  } else if( obs < sensor_threshold ){
     falling++;
-    if( falling >= 3 ){
-      rising = 0;
-      falling = 99;
-      return -1;
+    rising = 0;
+    Serial.print('-');
+    if( falling > 3 ){
+      falling = 99;// Crude way to handle rollovers
+      return_val = -1;
     }
   } else {
     rising = 0;
     falling = 0;
+    return_val = 0;
   }
   
-  return 0;
+  Serial.println(
+    String("Return: ") + String(return_val) + 
+    String(", Obs: " + String(obs) + 
+    String(", rising: ") + String(rising) + 
+    String(", falling: ") + String(falling) +
+    String(", threshold: ") + String(sensor_threshold) 
+    ));
+  
+  return return_val;
 } // end sensor_movement
 
 /**
  * Get the current running average of the sensor samples.
  */
-float sample_get_average(){
-  float sum = 0;
+double sample_get_average(){
+  double sum = 0;
   for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
     sum += samples_val[i];
   }
   return sum / SAMPLES_NUM;
+}
+
+double sample_get_stdev(){
+  double avg = sample_get_average();
+  double sq_diff_sum = 0;
+  double diff = 0;
+  for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
+    diff = samples_val[i] - avg;
+    sq_diff_sum += diff * diff;
+  }
+  return sqrt( sq_diff_sum / SAMPLES_NUM );
 }
 
 /**
@@ -489,5 +437,25 @@ void play_charge_fanfare(int pin){
   }
 }
 
+/*
+void play_scale_up(int pin){
+    // iterate over the notes of the melody:
+  for (int thisNote = 0; thisNote < 6; thisNote++) {
+
+    // to calculate the note duration, take one second
+    // divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int noteDuration = 1000 / SCALE_UP_DURATIONS[thisNote];
+    tone(pin, SCALE_UP[thisNote], noteDuration);
+
+    // to distinguish the notes, set a minimum time between them.
+    // the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = noteDuration * 1.30;
+    delay(pauseBetweenNotes);
+    // stop the tone playing:
+    noTone(pin);
+  }
+}
+*/
 
 
