@@ -18,6 +18,7 @@
 #define SAMPLES_NUM 20
 //#define SAMPLES_RECENCY_TO_IGNORE 3
 #define IRMS_THRESHOLD 1.4  
+#define SAMPLES_IN_A_ROW_OVER_THRESHOLD 5
 
 /*
 
@@ -236,7 +237,7 @@ signed char sensor_movement(){
     rising++;
     falling = 0;
     Serial.print('+');
-    if( rising > 3 ){
+    if( rising > SAMPLES_IN_A_ROW_OVER_THRESHOLD ){
       rising = 99;  // Crude way to handle rollovers
       return_val = +1;
     } // end if: rising 3x in a row
@@ -244,7 +245,7 @@ signed char sensor_movement(){
     falling++;
     rising = 0;
     Serial.print('-');
-    if( falling > 3 ){
+    if( falling > SAMPLES_IN_A_ROW_OVER_THRESHOLD ){
       falling = 99;// Crude way to handle rollovers
       return_val = -1;
     }
