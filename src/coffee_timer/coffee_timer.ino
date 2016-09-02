@@ -11,24 +11,24 @@
  */
 #define CURRENT_SENSOR_PIN A2
 #define PIEZZO_SPEAKER_PIN 2
-//#define SENSOR_TEST_PIN 0
+#define SENSOR_TEST_PIN 3
 #define LCD_I2C_ADDR 0x3F
 #define MINUTES_AFTER_WHICH_DROP_SECONDS 5
 #define DAYS_AFTER_WHICH_DROP_HOURS 2
 #define SAMPLES_NUM 20
-//#define SAMPLES_RECENCY_TO_IGNORE 3
 #define IRMS_THRESHOLD 1.4  
 #define SAMPLES_IN_A_ROW_OVER_THRESHOLD 5
+#define THRESHOLD_STD_DEVS 30
 
 /*
 
  Arduino
 +-------+
-|    A0 +-------+ Current sensor  +-------> 5V
+|    A0 +-------+ [Current sensor]  +-----> 5V
 |       |
-|    D8 +-------+ Piezzo Electric +-------> GND
+|    D8 +-------+ [Piezzo Electric] +-----> GND
 |       |
-|    D7 +-------+ Sensor test button +----> 5V
+|    D3 +-------+ Sensor test button +----> 5V
 |       |       |   10k resistor
 |       |       +---/\/\/\---------> GND
 |       |
@@ -88,8 +88,8 @@ const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 #define STATE_BREWED 2
 unsigned char state = STATE_UNKNOWN;
 
-unsigned long pots_brewed_count = 0;
-unsigned char brew_reset_buffer = 3;
+//unsigned long pots_brewed_count = 0;
+//unsigned char brew_reset_buffer = 3;
 
 /**
  * Keep track of when the coffee was finished
@@ -126,10 +126,10 @@ void setup()
     delay(2);
   }
 
-  // Find a good threshold at 3 standard deviations above baseline
+  // Find a good threshold at x standard deviations above baseline
   float avg = sample_get_average();
   float stdev = sample_get_stdev();
-  sensor_threshold = avg + 6 * stdev;
+  sensor_threshold = avg + THRESHOLD_STD_DEVS * stdev;
 
   // If you want to see what values you're getting when your coffee
   // pot is on or off, uncomment this line, and the program will display
@@ -155,42 +155,49 @@ void loop()
   }
   prev_millis = loop_start;
 
-  // Read the current sensor
-  //sample_make_observation();
-  //double Irms = sample_get_average();
+  if( digitalRead(SENSOR_TEST_PIN) == HIGH ){
+    do_threshold_experiment();
+  }
 
-  signed char movement = sensor_movement();
-  if( movement > 0 ){
-    switch( state ){
-      case STATE_BREWING:
-        // We already knew that.  Do nothing.
-        break;
-      default:
-        // Brewing has begun.
-        state = STATE_BREWING;
-    } // end switch: state
-  } // end if: movement > 0
+  else{
 
-  // Else the current is dropping -- done brewing?
-  else if( movement < 0 ){
-    switch( state ){
-      case STATE_BREWED:
-        // We already knew that.  Do nothing.
-        break;
-      case STATE_BREWING:  // Was brewing.  Now done!
-        state = STATE_BREWED;
-        coffee_birth_millis = millis();
-        pots_brewed_count++;
-        coffee_birth_rollovers = rollover_count;
-        play_charge_fanfare(PIEZZO_SPEAKER_PIN);
-    } // end switch: state
-  } // end if: movement < 0
-
-  update_display();
+    // Read the current sensor
+    //sample_make_observation();
+    //double Irms = sample_get_average();
+  
+    signed char movement = sensor_movement();
+    if( movement > 0 ){
+      switch( state ){
+        case STATE_BREWING:
+          // We already knew that.  Do nothing.
+          break;
+        default:
+          // Brewing has begun.
+          state = STATE_BREWING;
+      } // end switch: state
+    } // end if: movement > 0
+  
+    // Else the current is dropping -- done brewing?
+    else if( movement < 0 ){
+      switch( state ){
+        case STATE_BREWED:
+          // We already knew that.  Do nothing.
+          break;
+        case STATE_BREWING:  // Was brewing.  Now done!
+          state = STATE_BREWED;
+          coffee_birth_millis = millis();
+          //pots_brewed_count++;
+          coffee_birth_rollovers = rollover_count;
+          play_charge_fanfare(PIEZZO_SPEAKER_PIN);
+      } // end switch: state
+    } // end if: movement < 0
+  
+    update_display();
+  } // end else: not experiment
   
   // Minor delay on principle, but we do want to get
   // back to reading the sensor quickly.
-  delay(2);
+  delay(10);
   
 } // end loop
 
@@ -223,16 +230,10 @@ float sample_make_observation(){
 signed char sensor_movement(){
   static unsigned char rising = 0;
   static unsigned char falling = 0;
-
   int return_val = 0;
-
+  
   float obs = sample_make_observation();
-  //double avg = sample_get_average();
-  //double stdev = sample_get_stdev();
-  //double perc = (obs - avg) / avg;
-  //double dist = (obs - avg) / stdev;  // Distance from mean, in # of standard deviations
-  //Serial.println( String("avg: ") + String(avg) + String(", Stdev: ") + String(stdev) + String(", obs: ") + String(obs) + String(", dist: ") + String(dist));
-
+  
   if( obs > sensor_threshold ){
     rising++;
     falling = 0;
@@ -254,14 +255,16 @@ signed char sensor_movement(){
     falling = 0;
     return_val = 0;
   }
-  
-  Serial.println(
-    String("Return: ") + String(return_val) + 
-    String(", Obs: " + String(obs) + 
-    String(", rising: ") + String(rising) + 
-    String(", falling: ") + String(falling) +
-    String(", threshold: ") + String(sensor_threshold) 
-    ));
+
+  if( return_val != 0 ){
+    Serial.println(
+      String("Return: ") + String(return_val) + 
+      String(", Obs: " + String(obs) + 
+      String(", rising: ") + String(rising) + 
+      String(", falling: ") + String(falling) +
+      String(", threshold: ") + String(sensor_threshold) 
+      ));
+  }
   
   return return_val;
 } // end sensor_movement
@@ -277,6 +280,9 @@ double sample_get_average(){
   return sum / SAMPLES_NUM;
 }
 
+/**
+ * Get the current standard deviation of the sensor samples.
+ */
 double sample_get_stdev(){
   double avg = sample_get_average();
   double sq_diff_sum = 0;
@@ -352,6 +358,7 @@ void update_display(){
       unsigned long hours = (seconds_total / 3600) % 24;
       unsigned long days = seconds_total / (3600*24);
 
+      Serial.println(String(days) + String(":") + String(hours) + String(":") + String(minutes) + String(":") + String(seconds) + String(" - ") + String(seconds_total));
 
       // Make human readable time
       String age;
@@ -374,8 +381,8 @@ void update_display(){
         age = String(seconds) + String(" sec" );
         
       }
-      lcd_set_line(0, "Age of coffee:");
-      lcd_set_line(1, age);// + String(sample_get_average()));  // Just during testing.
+      lcd_set_line(0, "Last pot brewed:");
+      lcd_set_line(1, age + String(" ago"));// + String(sample_get_average()));  // Just during testing.
       break;
   } // end switch: state
 } // end update_display
@@ -402,16 +409,16 @@ void lcd_set_line(unsigned int lineNum, String newLine){
  */
 void do_threshold_experiment(){
   double Irms = 0;
-  Serial.begin(9600);
-  Serial.println("Turn machine on and off to see what a reasonable threshold would be.");
-  while(true){
-    sample_make_observation();
-    Irms = sample_get_average();
-    Serial.println(Irms);
-    lcd_set_line(0, "Sensor reading:");
-    lcd_set_line(1, String(Irms));
-    delay(10);
-  }
+  //Serial.begin(9600);
+  //Serial.println("Turn machine on and off to see what a reasonable threshold would be.");
+  //while(true){
+    float sample = sample_make_observation();
+    float avg = sample_get_average();
+    Serial.println(String("Obs: ") + String(sample) + String(", Avg: ") + String(avg));
+    lcd_set_line(0, String("Obs: ") + String(sample));
+    lcd_set_line(1, String("Avg: ") + String(avg));
+    //delay(10);
+  //}
 }
 
 /**
