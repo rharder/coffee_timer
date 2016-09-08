@@ -15,7 +15,7 @@
 #define LCD_I2C_ADDR 0x3F
 #define MINUTES_AFTER_WHICH_DROP_SECONDS 5
 #define DAYS_AFTER_WHICH_DROP_HOURS 2
-#define SAMPLES_NUM 20
+#define SAMPLES_NUM 10
 #define IRMS_THRESHOLD 1.4  
 #define SAMPLES_IN_A_ROW_OVER_THRESHOLD 5
 #define THRESHOLD_STD_DEVS 50
@@ -88,8 +88,6 @@ const int CHARGE_FANFARE_DURATIONS[] = { 8,8,8,4,8,2 };
 #define STATE_BREWED 2
 unsigned char state = STATE_UNKNOWN;
 
-//unsigned long pots_brewed_count = 0;
-//unsigned char brew_reset_buffer = 3;
 
 /**
  * Keep track of when the coffee was finished
@@ -101,7 +99,7 @@ unsigned long coffee_birth_millis = 0;
 unsigned long rollover_count = 0;
 unsigned long prev_millis = 0;
 
-String MSG;
+//String MSG;
 
 /**
  * Initial setup.
@@ -131,12 +129,6 @@ void setup()
   float stdev = sample_get_stdev();
   sensor_threshold = avg + THRESHOLD_STD_DEVS * stdev;
 
-  // If you want to see what values you're getting when your coffee
-  // pot is on or off, uncomment this line, and the program will display
-  // the running average of the raw readings.  Turn your pot on and off,
-  // and see what looks like a good threshold to use.
-  // When done, re-comment the line below.
-  //do_threshold_experiment();  // Find out what threshold should be
 }
 
 /**
@@ -160,10 +152,6 @@ void loop()
   }
 
   else{
-
-    // Read the current sensor
-    //sample_make_observation();
-    //double Irms = sample_get_average();
   
     signed char movement = sensor_movement();
     if( movement > 0 ){
@@ -279,8 +267,8 @@ signed char sensor_movement(){
 /**
  * Get the current running average of the sensor samples.
  */
-double sample_get_average(){
-  double sum = 0;
+float sample_get_average(){
+  float sum = 0;
   for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
     sum += samples_val[i];
   }
@@ -290,15 +278,15 @@ double sample_get_average(){
 /**
  * Get the current standard deviation of the sensor samples.
  */
-double sample_get_stdev(){
-  double avg = sample_get_average();
-  double sq_diff_sum = 0;
-  double diff = 0;
+float sample_get_stdev(){
+  float avg = sample_get_average();
+  float sq_diff_sum = 0;
+  float diff = 0;
   for( unsigned int i = 0; i < SAMPLES_NUM; i++ ){
     diff = samples_val[i] - avg;
     sq_diff_sum += diff * diff;
   }
-  return sqrt( sq_diff_sum / SAMPLES_NUM );
+  return (float)sqrt( sq_diff_sum / SAMPLES_NUM );
 }
 
 /**
@@ -311,7 +299,7 @@ unsigned long coffee_age_seconds(){
   // Are we on the same rollover?
   // [....B====M.....] millis - Birth
   if( rollover_count == coffee_birth_rollovers ){
-    return (mill - coffee_birth_millis) / 1000;
+    return (mill - coffee_birth_millis) / 1000UL;
     
   } else { // Deal with rollovers
     unsigned long seconds = 0;
@@ -319,20 +307,20 @@ unsigned long coffee_age_seconds(){
     
     // Add seconds from initial coffee birth to its first rollover
     // [....B=========R] Rollover - Birth
-    seconds += (0xFFFFFFFF - coffee_birth_millis) / 1000;
-    Serial.print(String(seconds) + String(" "));
+    seconds += (0xFFFFFFFF - coffee_birth_millis) / 1000UL;
+    //Serial.print(String(seconds) + String(" "));
 
     // Add up any intervening rollovers in their entirety
     // [==============R] Full span of 32-bit unsigned int
     for( unsigned long i = 1; i < (rollover_count - coffee_birth_rollovers); i++ ){
-      seconds += 0xFFFFFFFF / 1000;
+      seconds += 0xFFFFFFFF / 1000UL;
     } // end for: in-between rollovers
-    Serial.print(String(seconds) + String(" "));
+    //Serial.print(String(seconds) + String(" "));
 
     // Add up seconds from current rollover zero to millis()
     // [====M..........] millis() - zero
-    seconds += mill / 1000;
-    Serial.println(String(seconds) + String(" "));
+    seconds += mill / 1000UL;
+    //Serial.println(String(seconds) + String(" "));
 
     return seconds;
   }
@@ -394,7 +382,8 @@ void update_display(){
         age = String(seconds) + String(" sec" );
         
       }
-      lcd_set_line(0, msg);
+      lcd_set_line(0, "Last pot brewed:");
+//      lcd_set_line(0, msg);
       lcd_set_line(1, age + String(" ago"));
       break;
   } // end switch: state
@@ -421,17 +410,11 @@ void lcd_set_line(unsigned int lineNum, String newLine){
  * Instructions in setup() notes.
  */
 void do_threshold_experiment(){
-  double Irms = 0;
-  //Serial.begin(9600);
-  //Serial.println("Turn machine on and off to see what a reasonable threshold would be.");
-  //while(true){
-    float sample = sample_make_observation();
-    float avg = sample_get_average();
-    Serial.println(String("Obs: ") + String(sample) + String(", Avg: ") + String(avg));
-    lcd_set_line(0, String("Obs: ") + String(sample));
-    lcd_set_line(1, String("Avg: ") + String(avg));
-    //delay(10);
-  //}
+  float sample = sample_make_observation();
+  float avg = sample_get_average();
+  Serial.println(String("Obs: ") + String(sample) + String(", Avg: ") + String(avg));
+  lcd_set_line(0, String("Obs: ") + String(sample));
+  lcd_set_line(1, String("Avg: ") + String(avg));
 }
 
 /**
