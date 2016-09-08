@@ -18,7 +18,7 @@
 #define SAMPLES_NUM 20
 #define IRMS_THRESHOLD 1.4  
 #define SAMPLES_IN_A_ROW_OVER_THRESHOLD 5
-#define THRESHOLD_STD_DEVS 30
+#define THRESHOLD_STD_DEVS 50
 
 /*
 
@@ -233,6 +233,13 @@ signed char sensor_movement(){
   int return_val = 0;
   
   float obs = sample_make_observation();
+
+  float avg = sample_get_average();
+  if( avg > sensor_threshold ){
+    return +1;
+  } else {
+    return -1;
+  }
   
   if( obs > sensor_threshold ){
     rising++;
@@ -353,12 +360,13 @@ void update_display(){
       
     case STATE_BREWED:
       unsigned long seconds_total = coffee_age_seconds();
-      unsigned long seconds = seconds_total % 60;
-      unsigned long minutes = (seconds_total / 60) % 60;
-      unsigned long hours = (seconds_total / 3600) % 24;
-      unsigned long days = seconds_total / (3600*24);
+      unsigned long seconds = seconds_total % 60UL;
+      unsigned long minutes = (seconds_total / 60UL) % 60UL;
+      unsigned long hours = (seconds_total / 3600UL) % 24UL;
+      unsigned long days = seconds_total / (86400UL);
 
-      Serial.println(String(days) + String(":") + String(hours) + String(":") + String(minutes) + String(":") + String(seconds) + String(" - ") + String(seconds_total));
+      String msg = String(days) + String(":") + String(hours) + String(":") + String(minutes) + String(":") + String(seconds) + String("/") + String(seconds_total);
+      Serial.println(msg);
 
       // Make human readable time
       String age;
@@ -366,13 +374,18 @@ void update_display(){
         age = String(days) + String(" days");
         
       } else if( days > 0 ){
-        age = String(days) + String(" days") + String(hours) + String(" hr");
+        // This fancier singular/plural thing mostly sounds right with days/hours
+        // Don't think it's necessary for the smaller units
+        age = String(days) + String(" day");
+        age += (days == 1) ? String(" ") : String("s ");
+        age += String(hours) + String(" hr");
+        age += (hours == 1) ? String("") : String("s");
         
       } else if( hours > 0 ){ // 3 hr 27 min
         age = String(hours) + String(" hr ") + String(minutes) + String(" min" );
         
       } else if( minutes >= MINUTES_AFTER_WHICH_DROP_SECONDS ){ // 22 min
-        age = String(minutes) + String(" min ");
+        age = String(minutes) + String(" min");
         
       } else if( minutes > 0 ){ // 2 min 45 sec
         age = String(minutes) + String(" min ") + String(seconds) + String(" sec" );
@@ -381,8 +394,8 @@ void update_display(){
         age = String(seconds) + String(" sec" );
         
       }
-      lcd_set_line(0, "Last pot brewed:");
-      lcd_set_line(1, age + String(" ago"));// + String(sample_get_average()));  // Just during testing.
+      lcd_set_line(0, msg);
+      lcd_set_line(1, age + String(" ago"));
       break;
   } // end switch: state
 } // end update_display
