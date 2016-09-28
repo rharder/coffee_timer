@@ -113,7 +113,8 @@ void setup()
   lcd_set_line(1, "reading...");
 
   
-  emon1.current(CURRENT_SENSOR_PIN, 111.1); // Current: input pin, calibration.
+//  emon1.current(CURRENT_SENSOR_PIN, 111.1); // Current: input pin, calibration.
+  emon1.current(CURRENT_SENSOR_PIN, 60); // Current: input pin, calibration.
   for( int i = 0; i < 5; i++ ){
     emon1.calcIrms(1480); // Flush a few initial bad reads
     delay(2);
